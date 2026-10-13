@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Esporta su file CSV il risultato della query demo filtrata per codice compagnia.
+
+    Parametri del job:
+      codiceCompagnia  (obbligatorio) filtro della query, riportato nella prima riga del file
+      fileOutput       (obbligatorio) percorso del file CSV da generare
+      intestazione     (opzionale, default true) scrive la riga con i nomi delle colonne
+      separatore       (opzionale, default ;)
+      encoding         (opzionale, default UTF-8)
+      dataSourceJndi   (opzionale) DataSource JNDI; in alternativa jdbcUrl/jdbcUser/jdbcPassword
+      query            (opzionale) query alternativa a quella demo, con un solo parametro: il codice compagnia
+-->
+<job id="ts-batch-export" xmlns="http://xmlns.jcp.org/xml/ns/javaee"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee http://xmlns.jcp.org/xml/ns/javaee/jobXML_1_0.xsd"
+     version="1.0">
+
+    <step id="esportaCsv">
+        <chunk item-count="500">
+            <reader ref="demoQueryItemReader">
+                <properties>
+                    <property name="codiceCompagnia" value="#{jobParameters['codiceCompagnia']}"/>
+                    <property name="query" value="#{jobParameters['query']}"/>
+                    <property name="dataSourceJndi" value="#{jobParameters['dataSourceJndi']}"/>
+                    <property name="jdbcUrl" value="#{jobParameters['jdbcUrl']}"/>
+                    <property name="jdbcUser" value="#{jobParameters['jdbcUser']}"/>
+                    <property name="jdbcPassword" value="#{jobParameters['jdbcPassword']}"/>
+                    <property name="fetchSize" value="#{jobParameters['fetchSize']}?:500;"/>
+                </properties>
+            </reader>
+            <writer ref="csvFileItemWriter">
+                <properties>
+                    <property name="fileOutput" value="#{jobParameters['fileOutput']}"/>
+                    <property name="codiceCompagnia" value="#{jobParameters['codiceCompagnia']}"/>
+                    <property name="intestazione" value="#{jobParameters['intestazione']}?:true;"/>
+                    <property name="separatore" value="#{jobParameters['separatore']}"/>
+                    <property name="encoding" value="#{jobParameters['encoding']}?:UTF-8;"/>
+                </properties>
+            </writer>
+        </chunk>
+    </step>
+</job>
