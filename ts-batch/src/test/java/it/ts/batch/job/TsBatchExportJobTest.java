@@ -40,6 +40,9 @@ class TsBatchExportJobTest {
     /** Più di due chunk da 500, con l'ultimo parziale. */
     private static final int RECORD_COMPAGNIA_001 = 1234;
     private static final int RECORD_COMPAGNIA_002 = 17;
+    /** Compagnia con export incrementale: le prime righe risultano già esportate. */
+    private static final int RECORD_COMPAGNIA_004 = 10;
+    private static final int GIA_ESPORTATI_COMPAGNIA_004 = 4;
 
     private static Connection keepAlive;
 
@@ -56,7 +59,11 @@ class TsBatchExportJobTest {
                     + " DESCRIZIONE VARCHAR(100),"
                     + " IMPORTO DECIMAL(15,2),"
                     + " DATA_RIFERIMENTO DATE)");
+            st.execute("CREATE TABLE DEMO_COMPAGNIA ("
+                    + " CODICE_COMPAGNIA VARCHAR(10) PRIMARY KEY,"
+                    + " ULTIMO_ID_ESPORTATO BIGINT NOT NULL)");
         }
+        long ultimoIdEsportato004;
         try (PreparedStatement ps = keepAlive.prepareStatement(
                 "INSERT INTO DEMO_POLIZZA VALUES (?, ?, ?, ?, ?)")) {
             long id = 1;
@@ -69,7 +76,23 @@ class TsBatchExportJobTest {
             }
             // valori particolari: separatore nel testo e campi nulli
             inserisci(ps, id++, "003", "Rossi; Mario", new BigDecimal("1500"), LocalDate.of(2026, 2, 5));
-            inserisci(ps, id, "003", null, null, null);
+            inserisci(ps, id++, "003", null, null, null);
+            ultimoIdEsportato004 = id + GIA_ESPORTATI_COMPAGNIA_004 - 1;
+            for (int i = 1; i <= RECORD_COMPAGNIA_004; i++) {
+                inserisci(ps, id++, "004", "Incrementale " + i, BigDecimal.ONE, LocalDate.of(2026, 3, i));
+            }
+            ps.executeBatch();
+        }
+        // 888 non ha la riga: il calcolo del valore filtro fallisce
+        try (PreparedStatement ps = keepAlive.prepareStatement("INSERT INTO DEMO_COMPAGNIA VALUES (?, ?)")) {
+            for (String compagnia : new String[] {"001", "002", "003", "999"}) {
+                ps.setString(1, compagnia);
+                ps.setLong(2, 0);
+                ps.addBatch();
+            }
+            ps.setString(1, "004");
+            ps.setLong(2, ultimoIdEsportato004);
+            ps.addBatch();
             ps.executeBatch();
         }
     }
@@ -151,13 +174,49 @@ class TsBatchExportJobTest {
     }
 
     @Test
+    void esportaSoloRecordSuccessiviAlValoreFiltro() throws Exception {
+        Path file = tempDir.resolve("export_004.csv");
+
+        assertEquals(BatchStatus.COMPLETED, esegui("004", file, null));
+
+        List<String> righe = Files.readAllLines(file, StandardCharsets.UTF_8);
+        int attesi = RECORD_COMPAGNIA_004 - GIA_ESPORTATI_COMPAGNIA_004;
+        assertEquals(1 + 1 + attesi + 2, righe.size());
+        assertEquals("Incrementale " + (GIA_ESPORTATI_COMPAGNIA_004 + 1) + ";1,00;05/03/2026", righe.get(2));
+        assertEquals("RECORD_SCRITTI;" + attesi, righe.get(righe.size() - 2));
+    }
+
+    @Test
+    void queryValoreFiltroAlternativa() throws Exception {
+        Path file = tempDir.resolve("export_001_da_1000.csv");
+        Properties parametri = parametri("001", file, null);
+        parametri.setProperty("queryValoreFiltro",
+                "SELECT 1000 FROM DEMO_COMPAGNIA WHERE CODICE_COMPAGNIA = ?");
+
+        assertEquals(BatchStatus.COMPLETED, TsBatchMain.eseguiJob(parametri, TIMEOUT_MS));
+
+        List<String> righe = Files.readAllLines(file, StandardCharsets.UTF_8);
+        assertEquals("Polizza 1001;1001,50;28/09/2028", righe.get(2));
+        assertEquals("RECORD_SCRITTI;" + (RECORD_COMPAGNIA_001 - 1000), righe.get(righe.size() - 2));
+    }
+
+    @Test
+    void valoreFiltroAssenteFaFallireIlJob() throws Exception {
+        Path file = tempDir.resolve("export_888.csv");
+
+        assertEquals(BatchStatus.FAILED, esegui("888", file, null));
+
+        assertFalse(Files.exists(file), "il file non deve essere creato");
+    }
+
+    @Test
     void erroreQueryNonScriveIlFooter() throws Exception {
         Path file = tempDir.resolve("export_ko.csv");
         Properties parametri = parametri("001", file, null);
         // la riga 700 ha una data non valida: la lettura fallisce durante il secondo chunk
         parametri.setProperty("query", "SELECT DESCRIZIONE, IMPORTO,"
                 + " CASE WHEN ID = 700 THEN 'non-una-data' ELSE CAST(DATA_RIFERIMENTO AS VARCHAR) END"
-                + " FROM DEMO_POLIZZA WHERE CODICE_COMPAGNIA = ? ORDER BY ID");
+                + " FROM DEMO_POLIZZA WHERE CODICE_COMPAGNIA = ? AND ID > ? ORDER BY ID");
 
         assertEquals(BatchStatus.FAILED, TsBatchMain.eseguiJob(parametri, TIMEOUT_MS));
 

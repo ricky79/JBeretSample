@@ -3,7 +3,6 @@ package it.ts.batch.reader;
 import java.io.Serializable;
 import java.sql.Connection;
 import java.sql.Date;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -11,22 +10,23 @@ import java.util.logging.Logger;
 
 import javax.batch.api.BatchProperty;
 import javax.batch.api.chunk.AbstractItemReader;
+import javax.batch.runtime.context.JobContext;
 import javax.enterprise.context.Dependent;
 import javax.inject.Inject;
 import javax.inject.Named;
-import javax.naming.InitialContext;
-import javax.naming.NamingException;
-import javax.sql.DataSource;
 
+import it.ts.batch.jdbc.ConnessioneJdbc;
 import it.ts.batch.model.DemoRecord;
 
 /**
  * Reader che esegue la query demo filtrata per codice compagnia e restituisce
  * un {@link DemoRecord} per ogni riga.
  * <p>
- * La connessione si ottiene dal DataSource JNDI ({@code dataSourceJndi}) se
- * valorizzato, altrimenti tramite {@link DriverManager} ({@code jdbcUrl},
- * {@code jdbcUser}, {@code jdbcPassword}).
+ * La query ha due parametri: il codice compagnia e il valore filtro calcolato
+ * dallo step precedente ({@link it.ts.batch.batchlet.ValoreFiltroBatchlet}) e
+ * letto da {@link JobContext#getTransientUserData()}.
+ * <p>
+ * La connessione si ottiene tramite {@link ConnessioneJdbc}.
  * <p>
  * Il checkpoint è il numero di righe già lette: in caso di restart le righe
  * già elaborate vengono saltate (la query deve avere un ORDER BY stabile).
@@ -37,12 +37,16 @@ public class DemoQueryItemReader extends AbstractItemReader {
 
     private static final Logger LOG = Logger.getLogger(DemoQueryItemReader.class.getName());
 
-    /** Query demo: stringa, numero, data con filtro sul codice compagnia. */
+    /** Query demo: stringa, numero, data con filtro sul codice compagnia e sull'ultimo ID esportato. */
     public static final String DEFAULT_QUERY =
             "SELECT DESCRIZIONE, IMPORTO, DATA_RIFERIMENTO"
             + " FROM DEMO_POLIZZA"
             + " WHERE CODICE_COMPAGNIA = ?"
+            + " AND ID > ?"
             + " ORDER BY ID";
+
+    @Inject
+    private JobContext jobContext;
 
     @Inject
     @BatchProperty
@@ -84,12 +88,15 @@ public class DemoQueryItemReader extends AbstractItemReader {
         }
         String sql = isBlank(query) ? DEFAULT_QUERY : query;
 
-        connection = openConnection();
+        Object valoreFiltro = jobContext.getTransientUserData();
+
+        connection = ConnessioneJdbc.apri(dataSourceJndi, jdbcUrl, jdbcUser, jdbcPassword);
         statement = connection.prepareStatement(sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
         if (!isBlank(fetchSize)) {
             statement.setFetchSize(Integer.parseInt(fetchSize.trim()));
         }
         statement.setString(1, codiceCompagnia);
+        statement.setObject(2, valoreFiltro);
         resultSet = statement.executeQuery();
 
         righeLette = 0;
@@ -97,7 +104,7 @@ public class DemoQueryItemReader extends AbstractItemReader {
         while (righeLette < daSaltare && resultSet.next()) {
             righeLette++;
         }
-        LOG.info(() -> "Query aperta per codiceCompagnia=" + codiceCompagnia
+        LOG.info(() -> "Query aperta per codiceCompagnia=" + codiceCompagnia + ", valoreFiltro=" + valoreFiltro
                 + (daSaltare > 0 ? ", restart dalla riga " + daSaltare : ""));
     }
 
@@ -142,17 +149,6 @@ public class DemoQueryItemReader extends AbstractItemReader {
         if (errore != null) {
             throw errore;
         }
-    }
-
-    private Connection openConnection() throws SQLException, NamingException {
-        if (!isBlank(dataSourceJndi)) {
-            DataSource ds = (DataSource) new InitialContext().lookup(dataSourceJndi);
-            return ds.getConnection();
-        }
-        if (isBlank(jdbcUrl)) {
-            throw new IllegalArgumentException("Specificare dataSourceJndi oppure jdbcUrl");
-        }
-        return DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword);
     }
 
     private static boolean isBlank(String s) {
