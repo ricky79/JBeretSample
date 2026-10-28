@@ -13,10 +13,17 @@ import javax.batch.runtime.JobExecution;
 /**
  * Avvio da riga di comando del job di export.
  * <p>
- * Esempio:
+ * L'argomento opzionale {@code job} sceglie il job da eseguire (default {@value #JOB_NAME});
+ * gli altri argomenti {@code chiave=valore} sono i parametri del job.
+ * <p>
+ * Esempi:
  * <pre>
- * java -cp "ts-batch.jar:lib/*:driver-jdbc.jar" it.ts.batch.TsBatchMain \
+ * java -cp "ts-batch.jar:lib/*" it.ts.batch.TsBatchMain \
  *     codiceCompagnia=001 fileOutput=/tmp/export.csv jdbcUrl=jdbc:... jdbcUser=... jdbcPassword=...
+ *
+ * java -cp "ts-batch.jar:lib/*" it.ts.batch.TsBatchMain job=ts-batch-copia-db codiceCompagnia=001 \
+ *     origineJdbcUrl=jdbc:oracle:thin:@//host:1521/SERVIZIO origineJdbcUser=... origineJdbcPassword=... \
+ *     destinazioneJdbcUrl=jdbc:postgresql://host:5432/db destinazioneJdbcUser=... destinazioneJdbcPassword=...
  * </pre>
  * Su JDK 17+ aggiungere {@code --add-opens java.base/java.security=ALL-UNNAMED}
  * (richiesto da wildfly-security-manager, dipendenza di JBeret).
@@ -26,6 +33,9 @@ import javax.batch.runtime.JobExecution;
 public final class TsBatchMain {
 
     public static final String JOB_NAME = "ts-batch-export";
+    public static final String JOB_COPIA_DB = "ts-batch-copia-db";
+
+    private static final String ARG_JOB = "job";
 
     private static final Set<BatchStatus> STATI_FINALI =
             EnumSet.of(BatchStatus.COMPLETED, BatchStatus.FAILED, BatchStatus.STOPPED, BatchStatus.ABANDONED);
@@ -44,20 +54,36 @@ public final class TsBatchMain {
             parametri.setProperty(arg.substring(0, idx), arg.substring(idx + 1));
         }
 
-        BatchStatus esito = eseguiJob(parametri, 0);
-        System.out.println("Job " + JOB_NAME + " terminato con stato " + esito);
+        String jobName = (String) parametri.remove(ARG_JOB);
+        if (jobName == null || jobName.trim().isEmpty()) {
+            jobName = JOB_NAME;
+        }
+
+        BatchStatus esito = eseguiJob(jobName.trim(), parametri, 0);
+        System.out.println("Job " + jobName + " terminato con stato " + esito);
         System.exit(esito == BatchStatus.COMPLETED ? 0 : 1);
     }
 
     /**
-     * Avvia il job e attende la fine.
+     * Avvia il job {@value #JOB_NAME} e attende la fine.
      *
      * @param timeoutMillis tempo massimo di attesa, 0 per attendere senza limiti
      * @return lo stato finale del job
      */
     public static BatchStatus eseguiJob(Properties parametri, long timeoutMillis) throws InterruptedException {
+        return eseguiJob(JOB_NAME, parametri, timeoutMillis);
+    }
+
+    /**
+     * Avvia il job indicato e attende la fine.
+     *
+     * @param timeoutMillis tempo massimo di attesa, 0 per attendere senza limiti
+     * @return lo stato finale del job
+     */
+    public static BatchStatus eseguiJob(String jobName, Properties parametri, long timeoutMillis)
+            throws InterruptedException {
         JobOperator operator = BatchRuntime.getJobOperator();
-        long executionId = operator.start(JOB_NAME, parametri);
+        long executionId = operator.start(jobName, parametri);
         long scadenza = timeoutMillis > 0 ? System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis) : 0;
 
         JobExecution execution = operator.getJobExecution(executionId);

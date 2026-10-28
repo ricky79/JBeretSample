@@ -27,6 +27,8 @@
         <version.wildfly-security-manager>1.1.2.Final</version.wildfly-security-manager>
         <version.junit>5.10.2</version.junit>
         <version.h2>2.2.224</version.h2>
+        <version.ojdbc>23.5.0.24.07</version.ojdbc>
+        <version.postgresql>42.7.4</version.postgresql>
     </properties>
 
     <dependencyManagement>
@@ -84,6 +86,16 @@
                 <version>${version.junit}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.oracle.database.jdbc</groupId>
+                <artifactId>ojdbc11</artifactId>
+                <version>${version.ojdbc}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>${version.postgresql}</version>
             </dependency>
             <dependency>
                 <groupId>com.h2database</groupId>
